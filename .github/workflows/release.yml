@@ -1,0 +1,42 @@
+name: Publish verified Android APK
+
+on:
+  push:
+    branches: [main]
+    paths: ['dist/**', '.github/workflows/release.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the exact cloud-built APK
+        shell: bash
+        run: |
+          sha256sum -c dist/FlappyBro.apk.sha256
+          python3 - <<'PY'
+          import pathlib, subprocess, zipfile
+          apk = pathlib.Path('dist/FlappyBro.apk')
+          with zipfile.ZipFile(apk) as archive:
+              assert archive.testzip() is None
+              for name in ('AndroidManifest.xml', 'classes.dex', 'resources.arsc'):
+                  assert name in archive.namelist(), name
+          import os
+          signers = sorted(pathlib.Path(os.environ['ANDROID_HOME']).glob('build-tools/*/apksigner'))
+          assert signers, 'Android apksigner missing from runner'
+          subprocess.run([str(signers[-1]), 'verify', '--verbose', str(apk)], check=True)
+          PY
+      - name: Publish APK download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view v1.0.0 >/dev/null 2>&1; then
+            gh release upload v1.0.0 dist/FlappyBro.apk --clobber
+          else
+            gh release create v1.0.0 dist/FlappyBro.apk --target "$GITHUB_SHA" --title "FlappyBro 1.0.0" --notes-file dist/RELEASE_NOTES.md
+          fi
